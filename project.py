@@ -1,39 +1,35 @@
 import threading
+import time
 import time as t
-from datetime import date
 import cv2 as cv
 import os
 from datetime import date,datetime
-import numpy as np
 from collections import deque
 
 
 class Queue:
     def __init__(self,buffer=None):
         self.buffer = deque()
+        self.max_size = 10
     def enqueue(self, val):
+        if len(self.buffer) > self.max_size:
+            self.buffer.popleft()
         self.buffer.appendleft(val)
     def dequeue(self):
-        return self.buffer.pop()
+        if not self.is_empty():
+            return self.buffer.pop()
     def is_empty(self):
         return len(self.buffer) == 0
     def size(self):
         return len(self.buffer)
 
-class Dict:
+class Detect_Queue(Queue):
     def __init__(self):
-        self.dict = {}
-    def add(self,canvas, is_recording,not_recording):
-        self.dict['canvas'] = canvas
-        self.dict['is_recording'] = is_recording
-        self.dict['not_recording'] = not_recording
-    def clear(self):
-        self.dict.clear()
+        super().__init__()
+class Record_Queue(Detect_Queue):
+    def __init__(self):
+        super().__init__()
 
-    def size(self):
-        return len(self.dict)
-    def empty(self):
-        return len(self.dict) == 0
 
 def file_handler():
     directory_path = "C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos"
@@ -54,7 +50,7 @@ def file_handler():
 
 def options_video(cap, flag=False):
     filename = file_handler()
-    frames_per_second = 15.0
+    frames_per_second = 30.0
     res = '480p'
     def change_res(cap, width, height):
         cap.set(3,width)
@@ -91,99 +87,123 @@ def options_video(cap, flag=False):
     out = cv.VideoWriter(filename, video_type_cv2, frames_per_second, dims) # width, height
     return out
 
-def detect(frame,recording,not_recording):
-    haar_cascade = cv.CascadeClassifier('cascades/haar_face.xml')
-    gray_frame = cv.cvtColor(frame, cv.COLOR_BGRA2GRAY)
-    faces = haar_cascade.detectMultiScale(gray_frame, 1.3,4)
-    for(x,y,w,h) in faces:
-        if not_recording:
-            recording = True
-            not_recording = False
-        cv.rectangle(frame, (x,y), (x+w, y+h), (0,255,0), 2)
-    return (frame,recording,not_recording)
+class detect_and_Record:
+    def __init__(self,camera_index):
+        self.is_recording = False
+        self.not_recording = True
+        self.haar_cascade = cv.CascadeClassifier('cascades/haar_face.xml')
+        self.detect_queue = Detect_Queue()
+        self.record_queue = Record_Queue()
+        self.display_queue = Queue()
+        self.stop_event = threading.Event()
+        self.capture = cv.VideoCapture(camera_index)
+        if not self.capture.isOpened():
+            print("Something went wrong")
+        self.record = options_video(self.capture)
+        self.lock = threading.Lock()
+        self.capture_thread = threading.Thread(target=self.capture_frames, args=())
+        self.capture_thread.start()
+        #------------------------------------------------------
+        self.detect_thread = threading.Thread(target=self.detect)
+        self.detect_thread.start()
+        self.record_thread = threading.Thread(target=self.record_video)
+        self.record_thread.start()
+        # --------------------------------------------------------------
+        self.display_thread = threading.Thread(target=self.display_frame)
+        self.display_thread.start()
+        self.pre_timeframe = 0
+
+    def detect(self):
+        while not self.stop_event.is_set():
+            if not self.detect_queue.is_empty():
+                frame = self.detect_queue.dequeue()
+                gray_frame = cv.cvtColor(frame, cv.COLOR_BGRA2GRAY)
+                faces = self.haar_cascade.detectMultiScale(gray_frame, 1.3, 3)
+                if self.not_recording and len(faces) !=0:
+                    self.is_recording = True
+                    self.not_recording = False
+                for (x, y, w, h) in faces:
+                    cv.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                if self.is_recording:
+                    cv.circle(frame, (40, 60), 20, (0, 0, 255), -1)
+                self.display_queue.enqueue(frame)
+            if cv.waitKey(1) == ord('q'):
+                self.stop_event.set()
+                break
+        cv.destroyAllWindows()
+
+    def record_video(self):
+        duration = 10
+        current_time = None
+        start_time = True
+        while not self.stop_event.is_set():
+            if not self.record_queue.is_empty():
+                frame = self.record_queue.dequeue()
+                if self.is_recording:
+                    self.record.write(frame)
+                    # This if statement is when the current time is set
+                    if start_time:
+                        current_time = t.time()
+                        start_time = False
+                    # This if is when 10 seconds passes
+                    if int(t.time()) - int(current_time) >= duration:
+                        self.is_recording = False
+                        self.not_recording = True
+                        start_time = True
+                        self.record.release()
+                        self.record = options_video(self.capture, flag=True)
+            if cv.waitKey(1) == ord('q'):
+                self.stop_event.set()
+                break
+        cv.destroyAllWindows()
+
+    def display_frame(self):
+        while not self.stop_event.is_set():
+            if not self.display_queue.is_empty():
+                frame = self.display_queue.dequeue()
+                self.pre_timeframe = self.print_Frames(frame, self.pre_timeframe)
+                cv.imshow(f"Live vido 0", frame)
+            if cv.waitKey(1) == ord('q'):
+                self.stop_event.set()
+                break
+        cv.destroyAllWindows()
+    def capture_frames(self):
+        target_fps = 30
+        frame_duration = 1.0/target_fps
+        while not self.stop_event.is_set():
+            start_time = time.time()
+            ret, frame = self.capture.read()
+            if not ret:
+                print("Error: Can't receive frame. Exiting...")
+                break
+            recording_frame = frame.copy()
+            self.record_queue.enqueue(recording_frame)
+            self.detect_queue.enqueue(frame)
+            # ------------------------------------------------------
+            elapsed_time = time.time() - start_time
+            time_to_wait = frame_duration - elapsed_time
+            if time_to_wait > 0:
+                time.sleep(time_to_wait)
+            if cv.waitKey(1) == ord('q'):
+                self.stop_event.set()
+                break
+        self.capture.release()
+        self.record.release()
+        self.capture_thread.join()
+        self.display_thread.join()
+        self.detect_thread.join()
+        self.record_thread.join()
+        cv.destroyAllWindows()
+
+    def print_Frames(self,frame, pre_timeframe):
+        new_timeframe = t.time()
+        fps = int(1 / (new_timeframe - pre_timeframe))
+        pre_timeframe = new_timeframe
+        cv.putText(frame, f"FPS: {fps}", (10, 30), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1)
+        return pre_timeframe
 
 
-def print_Frames(frame, pre_timeframe):
-    new_timeframe = t.time()
-    fps = int(1 / (new_timeframe - pre_timeframe))
-    pre_timeframe = new_timeframe
-    cv.putText(frame, f"FPS: {fps}", (10,30), cv.FONT_HERSHEY_SIMPLEX, 1, (0,0,0), 1)
-    return pre_timeframe
-stop_event = threading.Event()
-def display_frame(queue, idx,stop_event):
-    frame = None
-    while not stop_event.is_set():
-        if not queue.is_empty():
-            frame = queue.dequeue()
-            cv.imshow(f"Live vido {idx}", frame)
-        if cv.waitKey(1) == ord('q'):
-            stop_event.set()
-            break
-    cv.destroyAllWindows()
-
-
-
-
-
-def Inner_Camera(camera_index):
-    duration = 10
-    start_time = True
-    current_time = None
-    is_recording = False
-    not_recording = True
-    queue = Queue()
-    dict = Dict()
-    capture = cv.VideoCapture(camera_index)
-    display_thread = threading.Thread(target=display_frame, args=(queue, camera_index,stop_event))
-    display_thread.start()
-    detect_thread = threading.Thread(target=detect, args=())
-    if not capture.isOpened():
-        return "Something went wrong"
-    record = options_video(capture)
-    pre_timeframe = 0
-    while not stop_event.is_set():
-        ret, frame = capture.read()
-        if not ret:
-            print("Error: Can't receive frame. Exiting...")
-            break
-        # Recording ------------------------------------------------
-        if is_recording:
-            record.write(frame)
-            cv.circle(frame, (40, 60), 20, (0, 0, 255), -1)
-            # This if statement is when the current time is set
-            if start_time:
-                current_time = t.time()
-                start_time = False
-            # This if is when 10 seconds passes
-            if int(t.time()) - int(current_time) >= duration:
-                is_recording = False
-                not_recording = True
-                start_time = True
-                record.release()
-                record = options_video(capture, flag=True)
-        # -----------------------------------------------------
-        # FPS Displaying
-        pre_timeframe = print_Frames(frame, pre_timeframe)
-        # ------------------------------------------------------
-        canvas,is_recording,not_recording = detect(frame,is_recording,not_recording)
-        # Add to the queue
-        queue.enqueue(canvas)
-        # Display from the queue
-        if cv.waitKey(1) == ord('q'):
-            break
-    capture.release()
-    display_thread.join()
-    record.release()
-    cv.destroyAllWindows()
-
-# This is threeading between the capture and the displaying
-capture_thread = threading.Thread(target=Inner_Camera, args=("http://192.168.0.123:4747/video",))
-capture_thread.start()
-capture_thread.join()
-
-
-
-
+camera = detect_and_Record(0)
 def Tracking_Camera(cap_idx):
 
     cap = cv.VideoCapture(cap_idx)
@@ -207,6 +227,3 @@ def Tracking_Camera(cap_idx):
 
     cap.release()
     cv.destroyAllWindows()
-
-# Outside_Camera("OpenCv/Photos/highway.mp4")
-
