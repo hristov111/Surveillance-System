@@ -3,14 +3,14 @@ import time
 import time as t
 import cv2 as cv
 import os
-from datetime import date,datetime
+from datetime import datetime
 from collections import deque
 
 
 class Queue:
     def __init__(self,buffer=None):
         self.buffer = deque()
-        self.max_size = 10
+        self.max_size = 50
     def enqueue(self, val):
         if len(self.buffer) > self.max_size:
             self.buffer.popleft()
@@ -50,7 +50,7 @@ def file_handler():
 
 def options_video(cap, flag=False):
     filename = file_handler()
-    frames_per_second = 30.0
+    frames_per_second = 20.0
     res = '480p'
     def change_res(cap, width, height):
         cap.set(3,width)
@@ -100,17 +100,11 @@ class detect_and_Record:
         if not self.capture.isOpened():
             print("Something went wrong")
         self.record = options_video(self.capture)
-        self.lock = threading.Lock()
-        self.capture_thread = threading.Thread(target=self.capture_frames, args=())
-        self.capture_thread.start()
         #------------------------------------------------------
         self.detect_thread = threading.Thread(target=self.detect)
-        self.detect_thread.start()
         self.record_thread = threading.Thread(target=self.record_video)
-        self.record_thread.start()
         # --------------------------------------------------------------
         self.display_thread = threading.Thread(target=self.display_frame)
-        self.display_thread.start()
         self.pre_timeframe = 0
 
     def detect(self):
@@ -130,7 +124,6 @@ class detect_and_Record:
             if cv.waitKey(1) == ord('q'):
                 self.stop_event.set()
                 break
-        cv.destroyAllWindows()
 
     def record_video(self):
         duration = 10
@@ -155,7 +148,6 @@ class detect_and_Record:
             if cv.waitKey(1) == ord('q'):
                 self.stop_event.set()
                 break
-        cv.destroyAllWindows()
 
     def display_frame(self):
         while not self.stop_event.is_set():
@@ -166,9 +158,11 @@ class detect_and_Record:
             if cv.waitKey(1) == ord('q'):
                 self.stop_event.set()
                 break
-        cv.destroyAllWindows()
     def capture_frames(self):
-        target_fps = 30
+        self.detect_thread.start()
+        self.record_thread.start()
+        self.display_thread.start()
+        target_fps = 60
         frame_duration = 1.0/target_fps
         while not self.stop_event.is_set():
             start_time = time.time()
@@ -189,7 +183,6 @@ class detect_and_Record:
                 break
         self.capture.release()
         self.record.release()
-        self.capture_thread.join()
         self.display_thread.join()
         self.detect_thread.join()
         self.record_thread.join()
@@ -204,26 +197,6 @@ class detect_and_Record:
 
 
 camera = detect_and_Record(0)
-def Tracking_Camera(cap_idx):
-
-    cap = cv.VideoCapture(cap_idx)
-    object_detector = cv.createBackgroundSubtractorMOG2()
-    while True:
-        ret, frame = cap.read()
-        # Object detection
-        mask = object_detector.apply(frame)
-        countours, _ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-        for cnt in countours:
-            # Calculate area and remove small elements
-            area = cv.contourArea(cnt)
-            if area > 100:
-                cv.drawContours(frame, [cnt], -1, (0,255,0), 2 )
-
-        cv.imshow("Resized", frame)
-        # cv.imshow('Mask', mask)
-
-        if cv.waitKey(5) == ord('q'):
-            break
-
-    cap.release()
-    cv.destroyAllWindows()
+capture_thread = threading.Thread(target=camera.capture_frames)
+capture_thread.start()
+capture_thread.join()
