@@ -32,7 +32,7 @@ class Record_Queue(Detect_Queue):
 
 
 def file_handler():
-    directory_path = "C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos"
+    directory_path = "C:\\Users\\saler\\PycharmProjects\\pythonProject\\videos"
     files = [os.path.join(directory_path, f) for f in os.listdir(directory_path) if
              os.path.isfile(os.path.join(directory_path, f))]
     now = datetime.now()
@@ -50,7 +50,7 @@ def file_handler():
 
 def options_video(cap, flag=False):
     filename = file_handler()
-    frames_per_second = 20.0
+    frames_per_second = 8
     res = '480p'
     def change_res(cap, width, height):
         cap.set(3,width)
@@ -91,12 +91,14 @@ class detect_and_Record:
     def __init__(self,camera_index):
         self.is_recording = False
         self.not_recording = True
+        self.camera_index = camera_index
         self.haar_cascade = cv.CascadeClassifier('cascades/haar_face.xml')
         self.detect_queue = Detect_Queue()
         self.record_queue = Record_Queue()
         self.display_queue = Queue()
         self.stop_event = threading.Event()
         self.capture = cv.VideoCapture(camera_index)
+        self.detection_back = cv.createBackgroundSubtractorMOG2()
         if not self.capture.isOpened():
             print("Something went wrong")
         self.record = options_video(self.capture)
@@ -104,23 +106,28 @@ class detect_and_Record:
         self.detect_thread = threading.Thread(target=self.detect)
         self.record_thread = threading.Thread(target=self.record_video)
         # --------------------------------------------------------------
-        self.display_thread = threading.Thread(target=self.display_frame)
         self.pre_timeframe = 0
 
     def detect(self):
         while not self.stop_event.is_set():
             if not self.detect_queue.is_empty():
+                find_countorurs = False
                 frame = self.detect_queue.dequeue()
-                gray_frame = cv.cvtColor(frame, cv.COLOR_BGRA2GRAY)
-                faces = self.haar_cascade.detectMultiScale(gray_frame, 1.3, 3)
-                if self.not_recording and len(faces) !=0:
+                # gray_frame = cv.cvtColor(frame, cv.COLOR_BGRA2GRAY)
+                mask = self.detection_back.apply(frame)
+                c,_ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+                for cnt in c:
+                    area = cv.contourArea(cnt)
+                    if area > 100:
+                        cv.drawContours(frame, [cnt], -1, (0, 255, 0),2)
+                        find_countorurs = True
+                if self.not_recording and find_countorurs:
                     self.is_recording = True
                     self.not_recording = False
-                for (x, y, w, h) in faces:
-                    cv.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 if self.is_recording:
                     cv.circle(frame, (40, 60), 20, (0, 0, 255), -1)
-                self.display_queue.enqueue(frame)
+                self.pre_timeframe = self.print_Frames(frame, self.pre_timeframe)
+                cv.imshow(f"Live {self.camera_index}", frame)
             if cv.waitKey(1) == ord('q'):
                 self.stop_event.set()
                 break
@@ -149,20 +156,10 @@ class detect_and_Record:
                 self.stop_event.set()
                 break
 
-    def display_frame(self):
-        while not self.stop_event.is_set():
-            if not self.display_queue.is_empty():
-                frame = self.display_queue.dequeue()
-                self.pre_timeframe = self.print_Frames(frame, self.pre_timeframe)
-                cv.imshow(f"Live vido 0", frame)
-            if cv.waitKey(1) == ord('q'):
-                self.stop_event.set()
-                break
     def capture_frames(self):
         self.detect_thread.start()
         self.record_thread.start()
-        self.display_thread.start()
-        target_fps = 60
+        target_fps = 8
         frame_duration = 1.0/target_fps
         while not self.stop_event.is_set():
             start_time = time.time()
@@ -183,7 +180,6 @@ class detect_and_Record:
                 break
         self.capture.release()
         self.record.release()
-        self.display_thread.join()
         self.detect_thread.join()
         self.record_thread.join()
         cv.destroyAllWindows()
@@ -196,7 +192,7 @@ class detect_and_Record:
         return pre_timeframe
 
 
-camera = detect_and_Record(0)
+camera = detect_and_Record(1)
 capture_thread = threading.Thread(target=camera.capture_frames)
 capture_thread.start()
 capture_thread.join()
