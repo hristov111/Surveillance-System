@@ -5,6 +5,8 @@ import cv2 as cv
 import os
 from datetime import datetime
 from collections import deque
+import calendar
+import shutil
 
 
 class Queue:
@@ -30,9 +32,44 @@ class Record_Queue(Detect_Queue):
     def __init__(self):
         super().__init__()
 
+# date: 11-02-2024
+# time: 18-47-59
+def make_dirs(latest_day,latest_date,next):
+    if int(latest_date) < int(next[1]):
+            os.makedirs(f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{next[1]}\\{next[0]}",exist_ok=True)
+            return f'C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{next[1]}\\{next[0]}'
+    elif int(latest_day) < int(next[0]):
+            os.makedirs(f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_date}\\{next[0]}",exist_ok=True)
+            return f'C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_date}\\{next[0]}'
+    elif int(latest_day) == int(next[0]) and int(latest_date) == int(next[1]):
+        return f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_date}\\{latest_day}"
+
+def make_empty_dirs():
+    month_path = "C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos"
+    all_entries = os.listdir(month_path)
+    month_dirs = [entry for entry in all_entries if os.path.isdir(os.path.join(month_path, entry))]
+    if len(month_dirs) > 2:
+        delete_dir(f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{month_dirs[0]}")
+    next = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+    date,_ = next.split("_")
+    date= date.split('-')
+    if month_dirs:
+        latest_month_dir = month_dirs[-1]
+        day_path = f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_month_dir}"
+        all_day_entries = os.listdir(day_path)
+        day_dirs = [entry for entry in all_day_entries if os.path.isdir(os.path.join(day_path, entry))]
+        if day_dirs:
+            latest_day_dir = day_dirs[-1]
+            return make_dirs(latest_day_dir,latest_month_dir,date)
+        else:
+            os.makedirs(f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_month_dir}\\{date[0]}",exist_ok=True)
+            return f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{latest_month_dir}\\{date[0]}"
+    else:
+        os.makedirs(f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{date[1]}\\{date[0]}", exist_ok=True)
+        return f"C:\\Users\\saler\\Desktop\\Programing\\motionDetection\\videos\\{date[1]}\\{date[0]}"
 
 def file_handler():
-    directory_path = "C:\\Users\\saler\\PycharmProjects\\pythonProject\\videos"
+    directory_path = make_empty_dirs()
     files = [os.path.join(directory_path, f) for f in os.listdir(directory_path) if
              os.path.isfile(os.path.join(directory_path, f))]
     now = datetime.now()
@@ -41,11 +78,12 @@ def file_handler():
     if files:
         latest_file = files[0]
         latest = latest_file.split("\\")[-1]
-        latest_int = int(latest[latest.index("o")+1:latest.find("(")]) + 1
-        return f"../videos/video{latest_int}({now}).avi"
+        latest_int = int(latest[latest.index("o") + 1:latest.find("(")]) + 1
+        return f"{directory_path}\\video{latest_int}({now}).avi"
     else:
-        return f"../videos/video0({now}).avi"
-
+        return f"{directory_path}\\video0({now}).avi"
+def delete_dir(path):
+    shutil.rmtree(path)
 
 
 def options_video(cap, flag=False):
@@ -98,7 +136,7 @@ class detect_and_Record:
         self.display_queue = Queue()
         self.stop_event = threading.Event()
         self.capture = cv.VideoCapture(camera_index)
-        self.detection_back = cv.createBackgroundSubtractorMOG2()
+        self.detection_back = cv.createBackgroundSubtractorMOG2(history=100, varThreshold=40)
         if not self.capture.isOpened():
             print("Something went wrong")
         self.record = options_video(self.capture)
@@ -118,8 +156,9 @@ class detect_and_Record:
                 c,_ = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
                 for cnt in c:
                     area = cv.contourArea(cnt)
-                    if area > 100:
-                        cv.drawContours(frame, [cnt], -1, (0, 255, 0),2)
+                    if area > 500:
+                        x,y,w,h = cv.boundingRect(cnt)
+                        cv.rectangle(frame,(x,y), (x+w, y+h), (0,255,0), 3)
                         find_countorurs = True
                 if self.not_recording and find_countorurs:
                     self.is_recording = True
