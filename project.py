@@ -231,7 +231,7 @@ class detect_and_Record:
         return pre_timeframe
 
 
-camera = detect_and_Record(1)
+camera = detect_and_Record(0)
 capture_thread = threading.Thread(target=camera.capture_frames)
 capture_thread.start()
 capture_thread.join()
